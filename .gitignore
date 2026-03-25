@@ -1,22 +1,19 @@
 # Dependencies
-node_modules/
-
-# Build outputs
-dist/
-*.zip
-
-# IDE
-.vscode/
-.idea/
+**/node_modules/
+**/package-lock.json
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Secrets
-.env
-.env.local
-*.pem
+# IDE
+.vscode/
+.idea/
 
-# Letta Code (agent workspace, never commit)
+# Build outputs
+dist/
+build/
+*.log
+
+# Letta local config
 .letta/
