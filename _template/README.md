@@ -100,3 +100,12 @@ license: MIT
 2. **Write clear descriptions** — This is the primary trigger mechanism
 3. **Use progressive disclosure** — Reference files, don't inline everything
 4. **Match template to purpose** — Use the right template for your skill type
+
+## Examples
+
+See `examples/` for concrete implementations of each template:
+
+| Example | Template | Description |
+|---------|----------|-------------|
+| `absurd-breakfast/` | WORKFLOW | Questionnaire absurde de test |
+| `design-system-onboarding/` | WORKFLOW | Configuration guidée d'un DS avec mémorisation |
