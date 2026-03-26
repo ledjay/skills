@@ -1,4 +1,4 @@
-# using-pencil
+# pencil-mcp
 
 Control [Pencil.dev](https://pencil.dev) design tool via MCP to create, inspect, and export UI designs programmatically.
 
@@ -36,7 +36,7 @@ export PENCIL_MCP_PATH="/path/to/pencil/mcp-server"
 
 ```bash
 # Install dependencies
-cd using-pencil/scripts && npm install && npm run build
+cd pencil-mcp/scripts && npm install && npm run build
 
 # Use CLI mode
 node pencil.cjs call batch_design '{
@@ -48,7 +48,7 @@ node pencil.cjs call batch_design '{
 ## Skill Structure
 
 ```
-using-pencil/
+pencil-mcp/
 ├── SKILL.md              ← Full documentation
 ├── README.md             ← This file
 ├── references/           ← Detailed references

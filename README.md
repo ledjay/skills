@@ -14,7 +14,7 @@ npx skills add jeremiegisserot/ledjay-skills
 
 | Skill | Description |
 |-------|-------------|
-| `using-pencil` | Control Pencil.dev via MCP |
+| `pencil-mcp` | Control Pencil.dev via MCP |
 
 *More coming soon...*
 

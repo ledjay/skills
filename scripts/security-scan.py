@@ -11,6 +11,8 @@ from pathlib import Path
 
 # Files to skip (self-referential)
 SKIP_FILES = {
+    # Compiled bundles (safe uses of new Function)
+    "pencil-mcp/scripts/pencil.cjs",
     "scripts/security-scan.py",
     "scripts/unicode-check.py",
 }

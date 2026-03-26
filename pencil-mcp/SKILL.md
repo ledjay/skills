@@ -1,5 +1,5 @@
 ---
-name: using-pencil
+name: pencil-mcp
 description: Control Pencil.dev design tool via MCP to create, inspect, and export UI designs programmatically. Covers batch_design DSL, design tokens, components, and code sync. Use when working with .pen files, Pencil MCP, design systems, or mockups.
 version: 2.0.0
 compatible-agents:
