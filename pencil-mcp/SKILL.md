@@ -1,7 +1,7 @@
 ---
 name: pencil-mcp
 description: Control Pencil.dev design tool via MCP to create, inspect, and export UI designs programmatically. Covers batch_design DSL, design tokens, components, and code sync. Use when working with .pen files, Pencil MCP, design systems, or mockups.
-version: 2.0.0
+version: 2.1.0
 compatible-agents:
   - letta-code
   - codex
@@ -37,6 +37,14 @@ Control **Pencil** (pencil.dev) via its MCP server. Create designs, manage token
 - General design tasks (use Pencil desktop app directly)
 - Non-Pencil design tools (Figma, Sketch, etc.)
 
+## ⚠️ Critical Warning
+
+> **NEVER write `.pen` JSON files directly.**
+> 
+> The `.pen` format is an internal schema. Writing JSON manually will open in Pencil but show an **empty canvas**.
+> 
+> **Always use MCP tools** (`batch_design`, `set_variables`, etc.) to create content.
+
 ## Prerequisites
 
 - Pencil desktop app running (`/Applications/Pencil.app`)
@@ -57,18 +65,59 @@ Control **Pencil** (pencil.dev) via its MCP server. Create designs, manage token
 
 ### CLI Mode (one-off calls)
 
+> ⚠️ **Important for CLI mode**: Each `pencil.cjs` invocation opens a **new MCP connection**. This means:
+> - `filePath` context is LOST between calls
+> - Bindings from `batch_design` are NOT available in subsequent calls
+> - You MUST capture and reuse node IDs between invocations
+> - WebSocket reconnection messages (`attempt 1/3`) are **normal**
+
 ```bash
+# Recommended timeout: 30-60s (not 15-20s)
 # Always use the compiled bundle (10x faster: 0.15s vs 1.5s)
-node <skill-path>/scripts/pencil.cjs call batch_design '{
-  "filePath": "design.pen",
-  "operations": "card=I(document,{type:\"frame\",name:\"Card\",width:300,layout:\"vertical\",gap:8,padding:[16,16],fill:\"#FFFFFF\",cornerRadius:12})"
+
+# 1. Open document (use RELATIVE path to avoid timeout)
+node <skill-path>/scripts/pencil.cjs call open_document '{
+  "filePath": "design.pen"
 }'
 
-# Rebuild after editing pencil.ts:
+# 2. Create tokens (filePath optional if file just opened)
+node <skill-path>/scripts/pencil.cjs call set_variables '{
+  "variables": {
+    "primary-500": {"type": "color", "value": "#3D7A4F"}
+  }
+}'
+# → Returns: {"success": true}
+
+# 3. Create design (CAPTURE the returned IDs!)
+node <skill-path>/scripts/pencil.cjs call batch_design '{
+  "operations": "card=I(document,{type:\"frame\",name:\"Card\",width:300,layout:\"vertical\",gap:8,padding:[16,16],fill:\"#FFFFFF\",cornerRadius:12})"
+}'
+# → Returns: {"insertedIds": ["ZwNEy", ...], "bindings": {"card": "ZwNEy"}}
+# ⚠️ Bindings are NO LONGER AVAILABLE in next call!
+# Use the insertedIds in subsequent operations.
+
+# 4. Add children to the card (use the ID from step 3)
+node <skill-path>/scripts/pencil.cjs call batch_design '{
+  "operations": "I(\"ZwNEy\",{type:\"text\",content:\"Hello\",fontSize:16})"
+}'
+# Note: filePath may be needed here since context was lost
+
+# 5. Get screenshot (MUST specify filePath in CLI mode)
+node <skill-path>/scripts/pencil.cjs call get_screenshot '{
+  "nodeId": "ZwNEy",
+  "filePath": "design.pen",
+  "outputPath": "./screenshot.png"
+}'
+```
+
+**Rebuild after editing pencil.ts:**
+```bash
 cd <skill-path>/scripts && npm run build
 ```
 
 ### Library Mode (complex workflows)
+
+> 🏆 **Recommended for multi-step operations** — single connection, no context loss.
 
 ```typescript
 import { PencilClient } from './pencil.ts'
@@ -80,374 +129,112 @@ await pencil.connect()
 // Create tokens
 await setTokens(pencil, {
   'primary-500': { type: 'color', value: '#3D7A4F' },
-  'radius-md':   { type: 'number', value: 12 },
 })
 
-// Build design
+// Create design
 const { insertedIds } = await batch(pencil, `
-  card=I(document,{type:"frame",name:"Component/Card",reusable:true,width:300,layout:"vertical",gap:8,padding:[16,16],fill:"#FFFFFF",cornerRadius:12})
-  title=I(card,{type:"text",content:"Hello",fontSize:16,fontWeight:"700",fill:"$primary-500"})
+  card=I(document,{type:"frame",name:"Card",width:300,layout:"vertical",gap:8,padding:[16,16],fill:"#FFFFFF",cornerRadius:12})
+  I(card,{type:"text",content:"Hello",fontSize:16})
 `)
 
-// Verify visually
-await screenshot(pencil, insertedIds[0], './out/card.png')
+// Visual verification
+await screenshot(pencil, insertedIds[0], './card.png')
 
 await pencil.disconnect()
 ```
 
-Run with: `npx tsx your-script.ts`
+## CLI vs Library Mode
 
-## Tools (15)
+| Aspect | CLI Mode | Library Mode |
+|--------|----------|--------------|
+| **Connection** | New per call | Persistent |
+| **filePath context** | LOST between calls | Preserved |
+| **Bindings** | Ephemeral | Available |
+| **Speed** | Slower (reconnection) | 5-10x faster |
+| **Use case** | One-off operations | Multi-step workflows |
 
-| Tool | Use for | ~Tokens |
-|------|---------|---------|
-| `batch_design` | Insert/update/delete nodes (max 25 ops) | ~50 response |
-| `batch_get` | Read nodes by ID or pattern | 700→26K (depth 0→3) |
-| `get_editor_state` | Current file, selection, components | **~9,500** (schema tax!) |
-| `get_screenshot` | Visual verification | 0 text (image) |
-| `get_variables` / `set_variables` | Read/write design tokens | ~100 / ~25 |
-| `snapshot_layout` | Debug layout (overflow, positioning) | varies |
-| `replace_all_matching_properties` | Bulk property swap (hex → variable refs) | ~100 |
-| `search_all_unique_properties` | Audit unique values (colors, fonts) | varies |
-| `export_nodes` | Export PNG/JPEG/PDF | 0 text |
-| `get_guidelines` | Design rules by topic | ~1,270 per topic |
-| `get_style_guide` / `get_style_guide_tags` | Style inspiration by tags | ~530 |
-| `open_document` | Open/create `.pen` file | ~27 |
-| `find_empty_space_on_canvas` | Find free canvas space | ~100 |
+## Gotchas Checklist
 
-## Recommended Workflow
+Before any Pencil MCP call, check:
 
-```
-1. get_editor_state       → ONCE per session (~9,500 tokens)
-2. get_variables          → Read existing tokens (~100 tokens)
-3. set_variables          → Create/modify tokens (batches of 5-10)
-4. batch_design           → Build layout (max 25 ops per call)
-5. get_screenshot         → ALWAYS verify visually
-6. batch_design           → Fix/iterate based on screenshot
-7. export_nodes           → Export when ready
-```
+- [ ] **Pencil desktop app is running**
+- [ ] **Using hex colors** (OKLCH renders invisible)
+- [ ] **Relative paths** for `filePath` (absolute = timeout)
+- [ ] **Max 25 ops** per `batch_design`
+- [ ] **Max 5-10 tokens** per `set_variables`
+- [ ] **Timeout set to 30-60s** (not 15-20s)
+- [ ] **No variables in `fontFamily`** (use literal strings)
+- [ ] **Always call `get_screenshot`** after design changes
 
-**After step 1**: Use `batch_get` depth 0 instead of `get_editor_state` for subsequent state checks (saves ~9K tokens).
+See `references/gotchas.md` for complete list.
 
-## Gotchas by Severity
+## Tool Reference
 
-### 🔴 Critical (will break your design)
+| Tool | Use for |
+|------|---------|
+| `open_document` | Open/create `.pen` file |
+| `batch_design` | Insert/update/delete nodes (max 25 ops) |
+| `batch_get` | Read nodes by ID or pattern |
+| `get_screenshot` | Visual verification — ALWAYS call after design |
+| `set_variables` | Create design tokens |
+| `get_variables` | Read existing tokens |
+| `export_nodes` | Export PNG/JPEG/PDF |
 
-| Gotcha | Detail |
-|--------|--------|
-| **OKLCH = invisible** | Pencil accepts OKLCH values silently but renders **white/nothing**. Always use hex: `#RRGGBB` or `#RRGGBBAA`. |
-| **Max 25 ops per batch_design** | Beyond = instability and potential corruption. |
-| **Always get_screenshot** | `batch_design` returns no visual preview. You're designing blind without it. |
-| **Variables in fontFamily errors** | `$font-body` in `fontFamily` doesn't resolve. Use literal strings: `"Inter"`, `"DM Sans"`. |
+## Reference Files
 
-### 🟡 Warning (may cause unexpected behavior)
-
-| Gotcha | Detail |
-|--------|--------|
-| **Schema tax** | `get_editor_state` returns ~9,500 tokens of static schema every call. Use `batch_get` depth 0 instead (~700 tokens). |
-| **batch_get depth explodes** | depth 0: ~700 → depth 1: ~2,900 → depth 2: ~10,000 → depth 3: ~26,000 tokens. |
-| **Max 5-10 vars per set_variables** | Beyond = timeout (15-20s). |
-| **flex children ignore x/y** | In `layout: "vertical"` or `"horizontal"`, `x` and `y` are ignored unless `layoutPosition: "absolute"`. |
-| **Shell Pattern = 2 batches** | Create Shell in batch 1, get its ID, then create variants in batch 2 (binding name not accessible). |
-| **descendants uses node ID** | NOT node name! Always `batch_get` first to find the slot's ID. |
-| **Omit filePath for active file** | Absolute paths can cause timeouts. |
-
-### ℹ️ Info (good to know)
-
-| Gotcha | Detail |
-|--------|--------|
-| **Variables chain works** | `$surface-punch → $corail-500 → #DF685A` resolves correctly. Use for 2-level token architecture. |
-| **Alpha in hex works** | `#DF685A20` = corail at ~12% opacity. Last 2 chars = alpha (00→FF). |
-| **Can't delete variables** | Sending `null` as value causes JSON error. Orphan variables stay forever — just ignore them. |
-| **No "image" node type** | Images are fills: `{fill: {type: "image", url: "..."}}`. |
-| **Place components at x=2000+** | Convention: avoid cluttering main design. |
-| **No auto-save** | Save frequently with Cmd+S. Use Git commits. |
-| **Limited undo/redo** | More limited than standard editors. Git = your safety net. |
-
-## batch_design DSL (Quick Ref)
-
-```
-name=I(parent, {nodeData})         # Insert (MUST have binding name)
-U("nodeId", {updateData})          # Update
-name=C("sourceId", parent, {})     # Copy
-name=R("nodeId", {nodeData})       # Replace
-M("nodeId", parent, index?)        # Move
-D("nodeId")                        # Delete
-G("nodeId", "ai"|"stock", "prompt") # Image fill
-```
-
-`document` = root binding. Separate operations with `\n`. No `id` property on new nodes.
-
-## Component Patterns
-
-### Decision Tree
-
-| Use Case | Pattern |
-|----------|---------|
-| Single component, no variants | Direct `reusable: true` |
-| Named presets (Button/Primary, Button/Secondary) | **Shell Pattern** |
-| Visual axes (Color × Style) | **Theme Pattern** |
-| Structural + visual (Button with icon variants × colors) | **Hybrid Shell+Theme** ⭐ |
-
-### Shell Pattern (color variants)
-
-```typescript
-import { createComponentFamily, batch, screenshot } from './helpers.ts'
-
-const family = await createComponentFamily(pencil, {
-  shell: {
-    name: 'Card',
-    width: 300, layout: 'vertical', gap: 12, padding: [20, 20],
-    cornerRadius: 12, fill: '#FFFFFF',
-    children: [
-      { type: 'text', name: 'card-title', content: 'Title', fontSize: 16, fill: '#1A2B1F' },
-    ],
-    slot: { name: 'card-content', height: 'fit_content(80)', layout: 'vertical', gap: 8 },
-  },
-  variants: [
-    { name: 'Green', fill: '#F0F7F2' },
-    { name: 'Promo', fill: '#FFF5F0', stroke: { fill: '#FF8C00', thickness: 2 } },
-  ],
-})
-
-// Modify the shell → ALL variants auto-update!
-await batch(pencil, `U("${family.shell.id}", {padding:[24,24], gap:16})`)
-```
-
-### Theme Pattern (orthogonal axes)
-
-```typescript
-// One component, all combinations — no need to pre-create variants
-const badge = await createParametricComponent(pencil, {
-  name: 'Badge',
-  axes: { Color: ['indigo', 'red'], Style: ['fill', 'tint', 'outline'] },
-  defaultTheme: { Color: 'indigo', Style: 'fill' },
-  variables: {
-    'badge-bg': {
-      type: 'color',
-      value: [
-        { value: '#6a6af4',   theme: { Color: 'indigo', Style: 'fill'    } },
-        { value: '#ebebff',   theme: { Color: 'indigo', Style: 'tint'    } },
-        { value: '#00000000', theme: {                  Style: 'outline' } },
-        { value: '#e1000f',   theme: { Color: 'red',    Style: 'fill'    } },
-        { value: '#ffe9e9',   theme: { Color: 'red',    Style: 'tint'    } },
-      ],
-    },
-  },
-  fill: '$badge-bg',
-  children: [{ type: 'text', content: 'Badge', fill: '$badge-text' }],
-})
-
-// Instances pick their combination on the fly:
-await batch(pencil, `
-  I(frame,{type:"ref",ref:"${badge.id}",theme:{Color:"red",Style:"tint"}})
-`)
-```
-
-## Detailed References
-
-Load as needed — each file is self-contained:
-
-- **`references/dsl.md`** — Complete DSL syntax, node types, layout, graphics, text, icons, examples
-- **`references/gotchas.md`** — All pitfalls: colors, layout, images, components, performance, MCP output
-- **`references/tokens.md`** — Design tokens (2-level architecture), theming, bulk swap, Pencil ↔ code sync
-- **`references/pen-schema.md`** — .pen format TypeScript schema (authoritative, from official docs)
-- **`references/components.md`** — Components, instances, descendants, slots, Shell Pattern, composition
-- **`references/mcp-optimization.md`** — Token audit results, cost per tool, optimization strategies
+| File | Content |
+|------|---------|
+| `references/dsl.md` | Complete batch_design DSL syntax |
+| `references/components.md` | Shell Pattern, slots, variants, compositions |
+| `references/tokens.md` | 2-level token architecture, theming |
+| `references/gotchas.md` | Critical pitfalls and workarounds |
+| `references/mcp-optimization.md` | Token cost audit, caching strategies |
+| `references/pen-schema.md` | `.pen` JSON schema (read-only!) |
 
 ## Examples
 
-### Parametric component with Theme Pattern
+### Create a design system
 
 ```typescript
-import { PencilClient } from './pencil.ts'
-import { createParametricComponent, batch } from './helpers.ts'
-
-const pencil = new PencilClient()
-await pencil.connect()
-
-// One component, all combinations — no need to pre-create variants
-const badge = await createParametricComponent(pencil, {
-  name: 'Badge',
-  axes: { Color: ['indigo', 'red'], Style: ['fill', 'tint', 'outline'] },
-  defaultTheme: { Color: 'indigo', Style: 'fill' },
-  variables: {
-    'badge-bg': {
-      type: 'color',
-      value: [
-        { value: '#6a6af4',   theme: { Color: 'indigo', Style: 'fill'    } },
-        { value: '#ebebff',   theme: { Color: 'indigo', Style: 'tint'    } },
-        { value: '#00000000', theme: {                  Style: 'outline' } },
-        { value: '#e1000f',   theme: { Color: 'red',    Style: 'fill'    } },
-        { value: '#ffe9e9',   theme: { Color: 'red',    Style: 'tint'    } },
-      ],
-    },
-    'badge-text': {
-      type: 'color',
-      value: [
-        { value: '#ffffff', theme: { Style: 'fill'    } },
-        { value: '#6a6af4', theme: { Color: 'indigo', Style: 'tint'    } },
-        { value: '#6a6af4', theme: { Color: 'indigo', Style: 'outline' } },
-        { value: '#e1000f', theme: { Color: 'red',    Style: 'tint'    } },
-        { value: '#e1000f', theme: { Color: 'red',    Style: 'outline' } },
-      ],
-    },
+// See references/components.md for Shell Pattern
+const family = await createComponentFamily(pencil, {
+  shell: {
+    name: 'Button',
+    width: 160,
+    layout: 'horizontal',
+    gap: 8,
+    padding: [12, 24],
+    cornerRadius: 8,
+    fill: '#3D7A4F',
+    children: [
+      { type: 'text', name: 'btn-label', content: 'Label', fontSize: 14 },
+    ],
   },
-  fill: '$badge-bg',
-  layout: 'horizontal', padding: [4, 8], clip: true,
-  justifyContent: 'center', alignItems: 'center',
-  children: [
-    { type: 'text', name: 'badge-label', content: 'Badge',
-      fontFamily: 'Inter', fontSize: 12, fontWeight: 'bold', fill: '$badge-text' },
+  variants: [
+    { name: 'Primary', fill: '#3D7A4F' },
+    { name: 'Danger', fill: '#DC2626' },
   ],
 })
-
-// Instances pick their combination on the fly:
-await batch(pencil, `
-  I(frame,{type:"ref",ref:"${badge.id}",theme:{Color:"red",Style:"tint"},descendants:{"badge-label":{content:"Error"}}})
-  I(frame,{type:"ref",ref:"${badge.id}",theme:{Color:"indigo",Style:"fill"},descendants:{"badge-label":{content:"Info"}}})
-`)
-
-await pencil.disconnect()
 ```
 
-### Hybrid Shell+Theme (structural + visual)
+### Export assets
 
 ```typescript
-// Direct .pen JSON generation — no MCP needed for file creation
-import { writeFileSync } from 'fs'
-
-// Shell = chrome (shared structure), Variants = different slot content
-const doc = {
-  version: '2.8',
-  // Scoped axes: "Btn-" prefix prevents Badge-Color from clashing with Btn-Color
-  themes: {
-    'Btn-Color': ['brand', 'neutral', 'danger'],
-    'Btn-Variant': ['primary', 'secondary', 'tertiary'],
-    'Btn-State': ['default', 'hover', 'pressed', 'loading', 'disabled'],
-  },
-  variables: {
-    'btn-bg':   { type: 'color', value: [
-      { value: '#2563eb', theme: { 'Btn-Color': 'brand', 'Btn-Variant': 'primary', 'Btn-State': 'default' } },
-      { value: '#1d4ed8', theme: { 'Btn-Color': 'brand', 'Btn-Variant': 'primary', 'Btn-State': 'hover' } },
-      // ... one entry per combination
-    ]},
-    'btn-text':   { type: 'color', value: [/* ... */] },
-    'btn-border': { type: 'color', value: [/* ... */] },
-  },
-  children: [
-    // Shell: defines chrome (bg, border, radius, padding) + slot + spinner
-    { type: 'frame', id: 'btn-shell', name: 'Component/Btn-Shell', reusable: true,
-      fill: '$btn-bg', stroke: { align: 'inside', thickness: 1.5, fill: '$btn-border' },
-      layout: 'horizontal', padding: [10, 16], cornerRadius: 8,
-      children: [
-        { type: 'frame', id: 'btn-slot', slot: [], layout: 'horizontal', gap: 6 },
-        { type: 'icon_font', id: 'btn-spinner', iconFontFamily: 'lucide',
-          iconFontName: 'loader-circle', fill: '$btn-text', opacity: '$btn-spinner-opacity',
-          layoutPosition: 'absolute' },
-      ],
-    },
-    // Structural variant: no icon (ref → Shell, injects label into slot)
-    { type: 'ref', id: 'btn-default', name: 'Component/Btn', ref: 'btn-shell', reusable: true,
-      descendants: { 'btn-slot': { children: [
-        { id: 'btn-lbl', type: 'text', content: 'Button', fill: '$btn-text' },
-      ]}},
-    },
-    // Structural variant: icon left
-    { type: 'ref', id: 'btn-iconl', name: 'Component/Btn-IconL', ref: 'btn-shell', reusable: true,
-      descendants: { 'btn-slot': { children: [
-        { id: 'il-icon', type: 'icon_font', iconFontFamily: 'lucide', iconFontName: 'arrow-left', fill: '$btn-text' },
-        { id: 'il-lbl', type: 'text', content: 'Button', fill: '$btn-text' },
-      ]}},
-    },
-    // Instance: picks structure AND visuals independently
-    { type: 'ref', ref: 'btn-iconl',
-      theme: { 'Btn-Color': 'danger', 'Btn-Variant': 'secondary', 'Btn-State': 'hover' },
-      descendants: { 'il-lbl': { content: 'Delete' } },
-    },
-  ],
-}
-writeFileSync('button.pen', JSON.stringify(doc, null, 2))
-// Then open in Pencil via MCP: open_document({filePathOrTemplate: "button.pen"})
+await exportNodes(pencil, [cardId], {
+  format: 'PNG',
+  scale: 2,
+  outputDir: './exports',
+})
 ```
 
-### CLI (one-off calls)
+## Troubleshooting
 
-#### Create a card component
-
-```bash
-node pencil.cjs call batch_design '{
-  "filePath": "design.pen",
-  "operations": "card=I(document,{type:\"frame\",name:\"Component/Card\",reusable:true,width:300,height:200,x:2000,y:0,layout:\"vertical\",gap:8,padding:[16,16],fill:\"$surface-card\",cornerRadius:16})\\ntitle=I(card,{type:\"text\",content:\"Title\",fontFamily:\"$font-display\",fontSize:18,fontWeight:\"600\",fill:\"$text-primary\"})\\ndesc=I(card,{type:\"text\",content:\"Description text\",fontFamily:\"$font-body\",fontSize:14,fill:\"$text-secondary\",textGrowth:\"fixed-width\",width:\"fill_container\"})"
-}'
-```
-
-#### Set up design tokens (2-level)
-
-```bash
-# Primitives first
-node pencil.cjs call set_variables '{
-  "filePath": "design.pen",
-  "variables": {
-    "primary-500": {"type": "color", "value": "#FF8C00"},
-    "neutral-50": {"type": "color", "value": "#FFFBF6"},
-    "neutral-800": {"type": "color", "value": "#3D2B1F"},
-    "font-body": {"type": "string", "value": "Inter"},
-    "radius-md": {"type": "number", "value": 12}
-  }
-}'
-
-# Then semantics (referencing primitives)
-node pencil.cjs call set_variables '{
-  "filePath": "design.pen",
-  "variables": {
-    "surface-card": {"type": "color", "value": "#FFFFFF"},
-    "text-primary": {"type": "color", "value": "$neutral-800"},
-    "text-secondary": {"type": "color", "value": "$neutral-500"},
-    "surface-body": {"type": "color", "value": "$neutral-50"}
-  }
-}'
-```
-
-#### Swap hardcoded colors → variables
-
-```bash
-# Audit
-node pencil.cjs call search_all_unique_properties '{
-  "filePath": "design.pen",
-  "parents": ["frameId"],
-  "properties": ["fillColor"]
-}'
-
-# Replace
-node pencil.cjs call replace_all_matching_properties '{
-  "filePath": "design.pen",
-  "parents": ["frameId"],
-  "properties": {"fillColor": [{"from": "#3D2B1F", "to": "$text-primary"}]}
-}'
-```
-
-## Pencil vs Figma
-
-### What Pencil Does NOT Do
-
-- ❌ Property-based variants (component switching)
-- ❌ Interactive states (hover, active, focus)
-- ❌ Prototyping (screen transitions)
-- ❌ Auto-save
-- ❌ Real-time collaboration
-- ❌ OKLCH color rendering
-- ❌ Variable deletion
-
-### What Pencil Does BETTER
-
-- ✅ JSON files (.pen) — readable, Git-versionable
-- ✅ MCP with full read/write (Figma MCP = read-only)
-- ✅ IDE integration (VS Code, Cursor)
-- ✅ Code export (React, HTML, Tailwind)
-- ✅ Variable chaining ($semantic → $primitive → #hex)
-- ✅ Theming native (multi-axis: light/dark, condensed/regular)
-- ✅ Lucide icons native
-- ✅ AI built-in for design generation
-- ✅ CLI batch mode (experimental)
-- ✅ **Multi-level propagation** (tested 3+ levels)
+| Issue | Solution |
+|-------|----------|
+| Empty canvas | You wrote `.pen` JSON directly — use MCP tools |
+| "wrong .pen file" | Add `filePath` to the call (context lost in CLI mode) |
+| Timeout | Use relative path, increase timeout to 60s |
+| Invisible colors | You used OKLCH — use hex only |
+| Screenshot fails | Add `filePath` parameter in CLI mode |
+| Bindings not found | They're ephemeral in CLI — use returned IDs |
+| WebSocket reconnection | Normal behavior in CLI mode — ignore |
